@@ -139,29 +139,42 @@ THRESHOLD = 0.5 # Probability threshold to classify as fake
 # =========================
 # Load Keras Model
 # =========================
-@st.cache_resource # Caches the loaded model
+@st.cache_resource
 def load_keras_model():
     """
-    Loads the Keras model from the specified path.
-    Handles potential errors during model loading.
+    Loads the Keras model from the specified path, fixing channel mismatch.
     """
     try:
-        model = tf.keras.models.load_model(MODEL_PATH)
-        # Determine IMAGE_SIZE from the model's input shape
-        # Assuming model.input_shape is (None, H, W, C)
-        if len(model.input_shape) == 4:
-            height, width, channels = model.input_shape[1], model.input_shape[2], model.input_shape[3]
-            st.session_state['model_input_size'] = (width, height)
-            st.session_state['model_input_channels'] = channels
-            print(f"Model loaded. Expected input size: {width}x{height} with {channels} channels.")
-        else:
-            raise ValueError(f"Unexpected model input shape: {model.input_shape}. Expected 4 dimensions.")
+        # Load without enforcing input shape
+        model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+
+        # If model expects 1 channel, rebuild to accept 3 channels
+        if model.input_shape[3] == 1:
+            st.warning("⚠ Model expects 1-channel input. Adjusting to accept RGB...")
+            from tensorflow.keras import layers, models
+
+            # New RGB input
+            new_input = layers.Input(shape=(model.input_shape[1], model.input_shape[2], 3))
+            # Convert RGB -> Grayscale to match original model expectation
+            x = layers.Lambda(lambda x: tf.image.rgb_to_grayscale(x))(new_input)
+            x = model(x)
+            model = models.Model(inputs=new_input, outputs=x)
+
+        height, width, channels = model.input_shape[1], model.input_shape[2], model.input_shape[3]
+        st.session_state['model_input_size'] = (width, height)
+        st.session_state['model_input_channels'] = channels
+
+        print(f"✅ Model loaded. Expected input size: {width}x{height} with {channels} channels.")
         return model
+
     except Exception as e:
-        st.error(f"🚨 **Error:** Could not load the Keras model from `{MODEL_PATH}`. "
-                 "Please ensure the `deepfake_inference_model.keras` file is in the same directory as this script. "
-                 f"**Details:** `{e}`")
+        st.error(
+            f"🚨 **Error:** Could not load the Keras model from `{MODEL_PATH}`. "
+            f"Ensure the file is in the same directory as this script. "
+            f"**Details:** `{e}`"
+        )
         return None
+
 
 # =========================
 # Preprocess Image (Corrected Version)
