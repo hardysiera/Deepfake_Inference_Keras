@@ -1,1 +1,15 @@
+# Core
 streamlit
+numpy
+pandas
+Pillow
+altair
+
+# Machine Learning / Deep Learning
+tensorflow==2.17.0
+
+# OpenCV headless (avoids libGL issues)
+opencv-python-headless
+
+# Optional utilities
+scikit-learn
