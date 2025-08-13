@@ -166,47 +166,22 @@ def load_keras_model():
 # =========================
 # Preprocess Image (Corrected Version)
 # =========================
-def preprocess_image(image, target_size, expected_channels):
+def preprocess_image(image, target_size, expected_channels=3):
     """
-    Preprocesses the input image for model inference.
-    Handles grayscale, RGBA, and RGB images robustly, resizing and applying
-    model-specific preprocessing.
+    Ensures image is RGB (3 channels) and resizes to model input.
     """
-    # Convert PIL Image to NumPy array
-    img_array = np.array(image)
-
-    # --- Start of new, more robust logic ---
-    # Handle 2D Grayscale images (shape: H, W)
-    if img_array.ndim == 2:
-        print("Debug: Detected 2D grayscale image. Converting to 3-channel RGB.")
-        # Convert grayscale to RGB by duplicating the single channel three times
-        img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2RGB)
-
-    # Handle images with an alpha channel (RGBA)
-    elif img_array.shape[-1] == 4:
-        print("Debug: Detected 4-channel RGBA image. Converting to 3-channel RGB.")
-        # Convert RGBA to RGB by discarding the alpha channel
-        img_array = cv2.cvtColor(img_array, cv2.COLOR_RGBA2RGB)
-
-    # Handle 3D Grayscale images (shape: H, W, 1)
-    elif img_array.shape[-1] == 1:
-        print("Debug: Detected 3D grayscale image (1 channel). Converting to 3-channel RGB.")
-        # Convert the single channel to a 3-channel image
-        img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2RGB)
+    # Convert PIL Image to RGB explicitly
+    image = image.convert("RGB")
     
-    # Ensure the final image has the expected number of channels
-    if img_array.shape[-1] != expected_channels:
-        raise ValueError(f"Image could not be converted to the expected {expected_channels} channels. Final shape: {img_array.shape}")
-    # --- End of new logic ---
-
-    # Resize image to model's expected input size
-    img_resized = cv2.resize(img_array, target_size)
+    # Resize to target size
+    img_resized = image.resize(target_size, resample=Image.BICUBIC)
     
-    # Apply EfficientNet's specific preprocessing (e.g., scaling pixels)
-    img_preprocessed = tf.keras.applications.efficientnet.preprocess_input(img_resized)
+    # Convert to NumPy array and scale pixels for EfficientNet
+    img_array = np.array(img_resized).astype(np.float32)
+    img_preprocessed = tf.keras.applications.efficientnet.preprocess_input(img_array)
     
-    # Add a batch dimension and ensure float32 type
-    img_batch = np.expand_dims(img_preprocessed, axis=0).astype(np.float32)
+    # Add batch dimension
+    img_batch = np.expand_dims(img_preprocessed, axis=0)
     
     return img_batch
 
