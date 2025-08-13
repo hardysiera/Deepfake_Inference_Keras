@@ -137,9 +137,8 @@ st.markdown(
 )
 
 # =========================
-# Constants
+# Constants (IMAGE_SIZE will be determined dynamically)
 # =========================
-IMAGE_SIZE = (240, 240) # Desired image size for model input
 MODEL_PATH = 'deepfake_inference_model.keras' # Path to your Keras model file
 THRESHOLD = 0.5 # Probability threshold to classify as fake
 
@@ -154,6 +153,15 @@ def load_keras_model():
     """
     try:
         model = tf.keras.models.load_model(MODEL_PATH)
+        # Determine IMAGE_SIZE from the model's input shape
+        # Assuming model.input_shape is (None, H, W, C)
+        if len(model.input_shape) == 4:
+            height, width, channels = model.input_shape[1], model.input_shape[2], model.input_shape[3]
+            st.session_state['model_input_size'] = (width, height)
+            st.session_state['model_input_channels'] = channels
+            print(f"Model loaded. Expected input size: {width}x{height} with {channels} channels.")
+        else:
+            raise ValueError(f"Unexpected model input shape: {model.input_shape}. Expected 4 dimensions.")
         return model
     except Exception as e:
         st.error(f"🚨 **Error:** Could not load the Keras model from `{MODEL_PATH}`. "
@@ -164,21 +172,32 @@ def load_keras_model():
 # =========================
 # Preprocess Image
 # =========================
-def preprocess_image(image):
+def preprocess_image(image, target_size, expected_channels):
     """
     Preprocesses the input image for model inference.
-    Steps: Convert PIL Image to numpy array, resize, apply EfficientNet preprocessing,
-    and expand dimensions for batch prediction.
+    Ensures correct resizing and channel count, then applies EfficientNet preprocessing.
     """
-    img_array = np.array(image) # Convert PIL Image object to NumPy array (RGB format)
+    img_array = np.array(image) # Convert PIL Image object to NumPy array (usually RGB)
 
-    # EfficientNet preprocessing usually expects RGB input.
-    # If your Keras model was trained with BGR, you might need to add:
-    # img_array = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+    # Ensure the image has the expected number of channels
+    if img_array.shape[-1] != expected_channels:
+        if expected_channels == 3 and img_array.ndim == 2: # Grayscale image loaded (2D array)
+            print(f"Debug: Converting 1-channel image to 3-channel (RGB) using cv2 for model input.")
+            img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2RGB)
+        elif expected_channels == 3 and img_array.shape[-1] == 1: # Grayscale image loaded (3D array with 1 channel)
+            print(f"Debug: Reshaping 1-channel image to 3-channel (RGB) using cv2 for model input.")
+            img_array = cv2.cvtColor(np.squeeze(img_array), cv2.COLOR_GRAY2RGB)
+        else:
+            raise ValueError(f"Unexpected image channel count: {img_array.shape[-1]}. Model expects {expected_channels}. "
+                             "Automatic conversion not supported for this scenario.")
 
-    img_resized = cv2.resize(img_array, IMAGE_SIZE) # Resize image to model's expected input size
+    # Resize image to model's expected input size
+    img_resized = cv2.resize(img_array, target_size)
+    
     # Apply EfficientNet's specific preprocessing (e.g., scaling to -1 to 1)
+    # This is crucial for consistency with the model's training.
     img_preprocessed = tf.keras.applications.efficientnet.preprocess_input(img_resized)
+    
     # Add a batch dimension and ensure float32 type
     img_batch = np.expand_dims(img_preprocessed, axis=0).astype(np.float32)
     return img_batch
@@ -259,6 +278,15 @@ def main():
     model = load_keras_model()
     if model is None:
         st.stop()
+    
+    # Retrieve model input size and channels from session state (set during model loading)
+    model_input_size = st.session_state.get('model_input_size')
+    model_input_channels = st.session_state.get('model_input_channels')
+
+    if model_input_size is None or model_input_channels is None:
+        st.error("Could not determine model input dimensions. Please restart the app.")
+        st.stop()
+
 
     st.markdown("---")
     st.subheader("📤 Upload Your Images for Analysis")
@@ -279,8 +307,13 @@ def main():
             st.write(f"### Analyzing: **{uploaded_file.name}**")
 
             with st.spinner("Processing image and making a prediction..."):
-                img_batch = preprocess_image(image)
-                is_fake, probability = keras_predict(model, img_batch)
+                try:
+                    # Pass dynamically determined target_size and expected_channels
+                    img_batch = preprocess_image(image, model_input_size, model_input_channels)
+                    is_fake, probability = keras_predict(model, img_batch)
+                except ValueError as ve:
+                    st.error(f"Error processing image '{uploaded_file.name}': {ve}")
+                    continue # Skip to the next file if preprocessing fails
 
             col1, col2 = st.columns([1, 2])
 
@@ -315,4 +348,9 @@ def main():
         st.markdown("---")
 
 if __name__ == "__main__":
+    # Initialize session state for model dimensions if not already present
+    if 'model_input_size' not in st.session_state:
+        st.session_state['model_input_size'] = None
+        st.session_state['model_input_channels'] = None
+    
     main()
