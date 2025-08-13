@@ -125,19 +125,13 @@ st.markdown(
         border-radius: 0.75rem !important;
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
     }
-
-    /* Ensure text color is white if a dark background were to be introduced */
-    .dark-background-element {
-        background-color: black;
-        color: white !important;
-    }
     </style>
     """,
     unsafe_allow_html=True
 )
 
 # =========================
-# Constants (IMAGE_SIZE will be determined dynamically)
+# Constants
 # =========================
 MODEL_PATH = 'deepfake_inference_model.keras' # Path to your Keras model file
 THRESHOLD = 0.5 # Probability threshold to classify as fake
@@ -170,36 +164,50 @@ def load_keras_model():
         return None
 
 # =========================
-# Preprocess Image
+# Preprocess Image (Corrected Version)
 # =========================
 def preprocess_image(image, target_size, expected_channels):
     """
     Preprocesses the input image for model inference.
-    Ensures correct resizing and channel count, then applies EfficientNet preprocessing.
+    Handles grayscale, RGBA, and RGB images robustly, resizing and applying
+    model-specific preprocessing.
     """
-    img_array = np.array(image) # Convert PIL Image object to NumPy array (usually RGB)
+    # Convert PIL Image to NumPy array
+    img_array = np.array(image)
 
-    # Ensure the image has the expected number of channels
+    # --- Start of new, more robust logic ---
+    # Handle 2D Grayscale images (shape: H, W)
+    if img_array.ndim == 2:
+        print("Debug: Detected 2D grayscale image. Converting to 3-channel RGB.")
+        # Convert grayscale to RGB by duplicating the single channel three times
+        img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2RGB)
+
+    # Handle images with an alpha channel (RGBA)
+    elif img_array.shape[-1] == 4:
+        print("Debug: Detected 4-channel RGBA image. Converting to 3-channel RGB.")
+        # Convert RGBA to RGB by discarding the alpha channel
+        img_array = cv2.cvtColor(img_array, cv2.COLOR_RGBA2RGB)
+
+    # Handle 3D Grayscale images (shape: H, W, 1)
+    elif img_array.shape[-1] == 1:
+        print("Debug: Detected 3D grayscale image (1 channel). Converting to 3-channel RGB.")
+        # Convert the single channel to a 3-channel image
+        img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2RGB)
+    
+    # Ensure the final image has the expected number of channels
     if img_array.shape[-1] != expected_channels:
-        if expected_channels == 3 and img_array.ndim == 2: # Grayscale image loaded (2D array)
-            print(f"Debug: Converting 1-channel image to 3-channel (RGB) using cv2 for model input.")
-            img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2RGB)
-        elif expected_channels == 3 and img_array.shape[-1] == 1: # Grayscale image loaded (3D array with 1 channel)
-            print(f"Debug: Reshaping 1-channel image to 3-channel (RGB) using cv2 for model input.")
-            img_array = cv2.cvtColor(np.squeeze(img_array), cv2.COLOR_GRAY2RGB)
-        else:
-            raise ValueError(f"Unexpected image channel count: {img_array.shape[-1]}. Model expects {expected_channels}. "
-                             "Automatic conversion not supported for this scenario.")
+        raise ValueError(f"Image could not be converted to the expected {expected_channels} channels. Final shape: {img_array.shape}")
+    # --- End of new logic ---
 
     # Resize image to model's expected input size
     img_resized = cv2.resize(img_array, target_size)
     
-    # Apply EfficientNet's specific preprocessing (e.g., scaling to -1 to 1)
-    # This is crucial for consistency with the model's training.
+    # Apply EfficientNet's specific preprocessing (e.g., scaling pixels)
     img_preprocessed = tf.keras.applications.efficientnet.preprocess_input(img_resized)
     
     # Add a batch dimension and ensure float32 type
     img_batch = np.expand_dims(img_preprocessed, axis=0).astype(np.float32)
+    
     return img_batch
 
 # =========================
@@ -260,15 +268,15 @@ def main():
     st.markdown("---")
 
     st.markdown("""
-    This application utilizes a **fine-tuned EfficientNetB0 Keras model** to discern whether an image is
+    This application utilizes a **fine-tuned EfficientNet Keras model** to discern whether an image is
     authentic or synthetically generated. Upload one or more images below for analysis.
     """)
 
     # Sidebar for 'About' information
     st.sidebar.title("✨ About This Detector")
     st.sidebar.info("""
-    - **Model Architecture:** EfficientNetB0 (efficient convolutional neural network)
-    - **Model Type:** Keras H5 or SavedModel (standard TensorFlow/Keras format)
+    - **Model Architecture:** EfficientNet (or similar CNN)
+    - **Model Type:** Keras (`.keras` file)
     - **Prediction Threshold:** Images with a probability greater than `0.5` are classified as fake.
     - **Supported Uploads:** JPG, JPEG, PNG images
     """)
@@ -286,7 +294,6 @@ def main():
     if model_input_size is None or model_input_channels is None:
         st.error("Could not determine model input dimensions. Please restart the app.")
         st.stop()
-
 
     st.markdown("---")
     st.subheader("📤 Upload Your Images for Analysis")
@@ -329,20 +336,21 @@ def main():
                 else:
                     st.success("✅ **REAL IMAGE.** This image appears to be authentic.")
 
-                st.markdown(f"**Confidence:** `{probability*100:.2f}%`")
+                st.markdown(f"**Confidence (Fake):** `{probability*100:.2f}%`")
                 display_confidence_bar(uploaded_file.name, probability)
                 st.markdown("</div>", unsafe_allow_html=True)
 
             results.append({
                 "Filename": uploaded_file.name,
                 "Prediction": "FAKE" if is_fake else "REAL",
-                "Confidence": f"{probability*100:.2f}%"
+                "Confidence (Fake)": f"{probability*100:.2f}%"
             })
             st.markdown("---")
 
-        st.markdown("### 📊 Overall Summary")
-        df_results = pd.DataFrame(results)
-        st.dataframe(df_results, use_container_width=True)
+        if results:
+            st.markdown("### 📊 Overall Summary")
+            df_results = pd.DataFrame(results)
+            st.dataframe(df_results, use_container_width=True)
     else:
         st.info("👆 Please upload one or more images above to initiate the deepfake detection process.")
         st.markdown("---")
