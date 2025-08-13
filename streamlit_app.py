@@ -167,23 +167,27 @@ def load_keras_model():
 # Preprocess Image (Corrected Version)
 # =========================
 def preprocess_image(image, target_size, expected_channels=3):
-    """
-    Ensures image is RGB (3 channels) and resizes to model input.
-    """
-    # Convert PIL Image to RGB explicitly
-    image = image.convert("RGB")
+    # Force RGB
+    if expected_channels == 3:
+        image = image.convert("RGB")
+    elif expected_channels == 1:
+        image = image.convert("L")  # Grayscale if model expects 1 channel
     
-    # Resize to target size
+    # Resize
     img_resized = image.resize(target_size, resample=Image.BICUBIC)
     
-    # Convert to NumPy array and scale pixels for EfficientNet
+    # Convert to NumPy
     img_array = np.array(img_resized).astype(np.float32)
+    
+    # If still grayscale but RGB expected, stack channels
+    if expected_channels == 3 and img_array.ndim == 2:
+        img_array = np.stack((img_array,)*3, axis=-1)
+    
+    # Preprocess for EfficientNet
     img_preprocessed = tf.keras.applications.efficientnet.preprocess_input(img_array)
-    
-    # Add batch dimension
     img_batch = np.expand_dims(img_preprocessed, axis=0)
-    
     return img_batch
+
 
 # =========================
 # Predict Deepfake
